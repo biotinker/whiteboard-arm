@@ -132,12 +132,14 @@ func GenerateObstacles() []*referenceframe.GeometriesInFrame {
 	standObj, _ := spatialmath.NewBox(standOrigin, standDims, "stand")
 	obstacles = append(obstacles, standObj)
 	
+	obstaclesInFrame = append(obstaclesInFrame, referenceframe.NewGeometriesInFrame(referenceframe.World, obstacles))
+	
 	// Add the glass as a geometry
 	glassDims := r3.Vector{X: 20000.0, Y: 20000.0, Z: 0.0}
 	glassObj, _ := spatialmath.NewBox(spatialmath.NewZeroPose(), glassDims, "glass")
-	obstacles = append(obstacles, glassObj)
 	
-	obstaclesInFrame = append(obstaclesInFrame, referenceframe.NewGeometriesInFrame(referenceframe.World, obstacles))
+	obstaclesInFrame = append(obstaclesInFrame, referenceframe.NewGeometriesInFrame("glass", []spatialmath.Geometry{glassObj}))
+	
 	return obstaclesInFrame
 }
 
