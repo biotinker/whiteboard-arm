@@ -16,6 +16,7 @@ import (
 	"go.viam.com/utils/rpc"
 	
 	"go.viam.com/rdk/services/motion"
+	servicepb "go.viam.com/api/service/motion/v1"
 )
 
 
@@ -24,11 +25,8 @@ const (
 	cloudUrl = ""
 	secret = ""
 	
-	zBuf = 20
-	
-	startX = 200.
-	startY = -400.
-	startZ = 650.
+	zAdj = 10 // adjustment to writing altitude
+	zBuf = zAdj + 20 // adjustment to non-writing holding height
 	
 	armName = "xArm7"
 	
@@ -69,7 +67,7 @@ func GenerateTransforms() []*referenceframe.LinkInFrame {
 		"marker_base",
 		nil,
 	)
-	markerGeom, _ := spatialmath.NewCapsule(spatialmath.NewPoseFromPoint(r3.Vector{0, 0, markerLen/2}), 15, markerLen, "marker")
+	markerGeom, _ := spatialmath.NewCapsule(spatialmath.NewPoseFromPoint(r3.Vector{0, 0, -markerLen/2}), 15, markerLen, "marker")
 	markerFrame := referenceframe.NewLinkInFrame(
 		"marker_base",
 		spatialmath.NewPoseFromPoint(r3.Vector{0, 0, markerLen}),
@@ -83,7 +81,7 @@ func GenerateTransforms() []*referenceframe.LinkInFrame {
 		"eraser_base",
 		nil,
 	)
-	eraserStemGeom, _ := spatialmath.NewCapsule(spatialmath.NewPoseFromPoint(r3.Vector{0, 0, eraserLen/2}), 15, markerLen, "eraser_stem")
+	eraserStemGeom, _ := spatialmath.NewCapsule(spatialmath.NewPoseFromPoint(r3.Vector{0, 0, -eraserLen/2}), 15, markerLen, "eraser_stem")
 	eraserStemFrame := referenceframe.NewLinkInFrame(
 		"eraser_base",
 		spatialmath.NewPoseFromPoint(r3.Vector{0, 0, eraserLen}),
@@ -193,10 +191,39 @@ func main() {
 	}
 	fmt.Println(spatialmath.PoseToProtobuf(markerPoseInGlass.Pose()))
 	
-	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPoseFromPoint(r3.Vector{0, 0, zBuf}))
+
+	// Move to start position
+	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(r3.Vector{0, 0, 200}, &spatialmath.OrientationVectorDegrees{OZ: -1}))
 	_, err = motionService.Move(context.Background(), markerResource, goal, worldState, nil, nil)
 	if err != nil {
 		fmt.Println(err)
+	}
+	
+	allow := []*servicepb.CollisionSpecification_AllowedFrameCollisions{
+		&servicepb.CollisionSpecification_AllowedFrameCollisions{Frame1: "marker", Frame2: "glass"},
+	}
+	
+	linearConstraint := &servicepb.Constraints{LinearConstraint: []*servicepb.LinearConstraint{&servicepb.LinearConstraint{}}}
+	writeConstraint := &servicepb.Constraints{
+		LinearConstraint: []*servicepb.LinearConstraint{&servicepb.LinearConstraint{}},
+		CollisionSpecification: []*servicepb.CollisionSpecification{&servicepb.CollisionSpecification{Allows: allow}},
+	}
+	
+	for _, viamLetterPts := range viamPoints {
+		startPt := viamLetterPts[0]
+		startPt.Z += zBuf
+		goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(startPt, &spatialmath.OrientationVectorDegrees{OZ: -1}))
+		_, err = motionService.Move(context.Background(), markerResource, goal, worldState, linearConstraint, nil)
+		for _, viamPt := range viamLetterPts {
+			adjPt := viamPt
+			adjPt.Z += zAdj
+			goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(adjPt, &spatialmath.OrientationVectorDegrees{OZ: -1}))
+			_, err = motionService.Move(context.Background(), markerResource, goal, worldState, writeConstraint, nil)
+		}
+		endPt := viamLetterPts[len(viamLetterPts) - 1]
+		endPt.Z += zBuf
+		goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(endPt, &spatialmath.OrientationVectorDegrees{OZ: -1}))
+		_, err = motionService.Move(context.Background(), markerResource, goal, worldState, linearConstraint, nil)
 	}
 }
 
