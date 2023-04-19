@@ -394,13 +394,25 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 		eraserPt1.Y -= (eraserY/2 + segBuffer/2)
 		eraserPt2 = segPts[1]
 		eraserPt2.Y += (eraserY/2 + segBuffer/2)
+		
+		// Don't erase adjacent lines
+		if segPts[0].X == 0 {
+			// left side
+			eraserPt1.X += eraserX/2 - segBuffer
+			eraserPt2.X += eraserX/2 - segBuffer
+		} else {
+			// right side
+			eraserPt1.X -= eraserX/2 - segBuffer
+			eraserPt2.X -= eraserX/2 - segBuffer
+		}
+		
 	} else {
 		//horizontal line
 		eraserOrient = &spatialmath.OrientationVectorDegrees{OZ: -1}
 		eraserPt1 = segPts[0]
-		eraserPt1.X -= (eraserX/2 + segBuffer/2)
+		eraserPt1.X += (eraserX/2 + segBuffer/2)
 		eraserPt2 = segPts[1]
-		eraserPt2.X += (eraserX/2 + segBuffer/2)
+		eraserPt2.X -= (eraserX/2 + segBuffer/2)
 	}
 
 	eraserPt1.Z = eraserBuf
