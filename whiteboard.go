@@ -26,7 +26,7 @@ const (
 	cloudUrl = ""
 	secret   = ""
 
-	zAdj = 4         // adjustment to writing altitude
+	zAdj = 3         // adjustment to writing altitude
 	zBuf = zAdj + 20 // adjustment to non-writing holding height
 
 	eraserBuf = zAdj + 3 // eraser held this much further away than marker
@@ -43,14 +43,14 @@ const (
 	segBuffer = 10.
 
 	digitXoffset = 150.
-	colonWidth   = 50.
+	colonWidth   = 55.
 )
 
 var (
 	// Measured points on glass plane
-	pt1 = r3.Vector{-479.8, -412.3, 613.5}
+	pt1 = r3.Vector{-479.8, -410.3, 613.5}
 	pt2 = r3.Vector{-62.4, -398.2, -147.4}
-	pt3 = r3.Vector{216.1, -399.2, 734.4}
+	pt3 = r3.Vector{216.1, -400, 734.4}
 
 	home7 = referenceframe.FloatsToInputs([]float64{0, 0, 0, 0, 0, 0, 0})
 
@@ -227,7 +227,8 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
-	writeViam(motionService, worldState)
+	//~ writeViam(motionService, worldState)
+	writeTime(motionService, worldState)
 }
 
 func writeViam(motionService motion.Service, worldState *referenceframe.WorldState) {
@@ -274,6 +275,7 @@ func writeTime(motionService motion.Service, worldState *referenceframe.WorldSta
 		// Write the starting time
 		hourStr := strconv.Itoa(curHour)
 		minuteStr := strconv.Itoa(curMinute)
+		fmt.Println("hour", hourStr, "minute", minuteStr)
 		if len(hourStr) == 1 {
 			hourStr = "." + hourStr
 		}
@@ -311,7 +313,7 @@ func changeDigit(motionService motion.Service, worldState *referenceframe.WorldS
 	for _, d := range oldSegs {
 		toErase[string(d)] = true
 	}
-	for _, d := range oldSegs {
+	for _, d := range newSegs {
 		if _, ok := toErase[string(d)]; ok {
 			// If here, then segment is already drawn
 			toErase[string(d)] = false
@@ -320,6 +322,8 @@ func changeDigit(motionService motion.Service, worldState *referenceframe.WorldS
 			toWrite[string(d)] = true
 		}
 	}
+	fmt.Println("to erase", toErase)
+	fmt.Println("to write", toWrite)
 
 	// First erase unneeded segments
 	for k, v := range toErase {
@@ -338,7 +342,7 @@ func changeDigit(motionService motion.Service, worldState *referenceframe.WorldS
 func writeSegment(motionService motion.Service, worldState *referenceframe.WorldState, segStr string, offset r3.Vector) {
 	markerResource := resource.Name{Name: "marker"}
 	segPts := segments[segStr]
-	markerOrient := &spatialmath.OrientationVectorDegrees{OZ: -1}
+	markerOrient := &spatialmath.OrientationVectorDegrees{OZ: -1, Theta:90}
 
 	markerStart := segPts[0].Add(offset)
 	markerStart.Z += zBuf
@@ -386,15 +390,16 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 	// Determine start/end points from eraser and line dimensions
 	if segPts[0].X == segPts[1].X {
 		// vertical line
-		eraserPt1 = segPts[0].Add(offset)
+		eraserPt1 = segPts[0]
 		eraserPt1.Y -= (eraserY/2 + segBuffer/2)
-		eraserPt2 = segPts[1].Add(offset)
+		eraserPt2 = segPts[1]
 		eraserPt2.Y += (eraserY/2 + segBuffer/2)
 	} else {
 		//horizontal line
-		eraserPt1 = segPts[0].Add(offset)
+		eraserOrient = &spatialmath.OrientationVectorDegrees{OZ: -1}
+		eraserPt1 = segPts[0]
 		eraserPt1.X -= (eraserX/2 + segBuffer/2)
-		eraserPt2 = segPts[1].Add(offset)
+		eraserPt2 = segPts[1]
 		eraserPt2.X += (eraserX/2 + segBuffer/2)
 	}
 
@@ -406,25 +411,25 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 	eraserEnd.Z += zBuf
 
 	// move to just off the first point
-	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserStart, eraserOrient))
+	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserStart.Add(offset), eraserOrient))
 	_, err := motionService.Move(context.Background(), eraserResource, goal, worldState, nil, nil)
 	if err != nil {
 		fmt.Println(err)
 	}
 	// touch glass
-	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserPt1, eraserOrient))
+	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserPt1.Add(offset), eraserOrient))
 	_, err = motionService.Move(context.Background(), eraserResource, goal, worldState, eraseConstraint, nil)
 	if err != nil {
 		fmt.Println(err)
 	}
 	// erase
-	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserPt2, eraserOrient))
+	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserPt2.Add(offset), eraserOrient))
 	_, err = motionService.Move(context.Background(), eraserResource, goal, worldState, eraseConstraint, nil)
 	if err != nil {
 		fmt.Println(err)
 	}
 	// retreat from glass
-	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserEnd, eraserOrient))
+	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserEnd.Add(offset), eraserOrient))
 	_, err = motionService.Move(context.Background(), eraserResource, goal, worldState, linearConstraint, nil)
 	if err != nil {
 		fmt.Println(err)
@@ -495,11 +500,11 @@ var segments = map[string][]r3.Vector{
 		{segBuffer, -segLen*2 - 4*segBuffer, 0},
 		{segBuffer + segLen, -segLen*2 - 4*segBuffer, 0},
 	},
-	"B": []r3.Vector{
+	"C": []r3.Vector{
 		{segLen + 2*segBuffer, -segLen - 3*segBuffer, 0},
 		{segLen + 2*segBuffer, -segLen*2 - 3*segBuffer, 0},
 	},
-	"C": []r3.Vector{
+	"B": []r3.Vector{
 		{segLen + 2*segBuffer, -segBuffer, 0},
 		{segLen + 2*segBuffer, -segBuffer - segLen, 0},
 	},
