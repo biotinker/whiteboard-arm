@@ -26,17 +26,17 @@ const (
 	cloudUrl = ""
 	secret   = ""
 
-	zAdj = 3         // adjustment to writing altitude
-	zBuf = zAdj + 20 // adjustment to non-writing holding height
+	zAdj = 3.5         // adjustment to writing altitude
+	zBuf = zAdj + 50 // adjustment to non-writing holding height
 
-	eraserBuf = zAdj + 3 // eraser held this much further away than marker
+	eraserBuf = zAdj - 1 // eraser held this much further away than marker
 
 	armName = "xArm7"
 
 	markerLen = 170.
 	eraserLen = 180.
-	eraserX   = 110.
-	eraserY   = 55.
+	eraserX   = 90.
+	eraserY   = 45.
 
 	// 7-segment line length and spacing
 	segLen    = 100.
@@ -48,9 +48,9 @@ const (
 
 var (
 	// Measured points on glass plane
-	pt1 = r3.Vector{-479.8, -410.3, 613.5}
-	pt2 = r3.Vector{-62.4, -398.2, -147.4}
-	pt3 = r3.Vector{216.1, -400, 734.4}
+	pt1 = r3.Vector{-430.35, -412, 699.97}
+	pt2 = r3.Vector{-97.5, -404.28, 415.81}
+	pt3 = r3.Vector{232.71, -400, 753.94}
 
 	home7 = referenceframe.FloatsToInputs([]float64{0, 0, 0, 0, 0, 0, 0})
 
@@ -229,6 +229,31 @@ func main() {
 	}
 	//~ writeViam(motionService, worldState)
 	writeTime(motionService, worldState)
+	//~ calibrate(motionService, worldState)
+}
+
+func calibrate(motionService motion.Service, worldState *referenceframe.WorldState) {
+
+	markerResource := resource.Name{Name: "marker"}
+	orient := &spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90}
+
+	startPt := calibPoints[0]
+	startPt.Z += zBuf
+	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(startPt, orient))
+	_, err := motionService.Move(context.Background(), markerResource, goal, worldState, nil, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+	for _, viamPt := range calibPoints {
+		adjPt := viamPt
+		adjPt.Z += zAdj
+		goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(adjPt, orient))
+		_, err = motionService.Move(context.Background(), markerResource, goal, worldState, writeConstraint, nil)
+	}
+	endPt := calibPoints[len(calibPoints)-1]
+	endPt.Z += zBuf
+	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(endPt, orient))
+	_, err = motionService.Move(context.Background(), markerResource, goal, worldState, writeConstraint, nil)
 }
 
 func writeViam(motionService motion.Service, worldState *referenceframe.WorldState) {
@@ -288,19 +313,23 @@ func writeTime(motionService motion.Service, worldState *referenceframe.WorldSta
 				worldState,
 				digitSegmentMap[oldHour[i]],
 				digitSegmentMap[string(d)],
-				r3.Vector{float64(i) * digitXoffset, 0, 0},
+				r3.Vector{2*digitXoffset + colonWidth + float64(1-i)*digitXoffset, 0, 0},
 			)
 		}
 		for i, d := range minuteStr {
+			//~ if i == 0 {
+				//~ continue
+			//~ }
 			changeDigit(
 				motionService,
 				worldState,
 				digitSegmentMap[oldMinute[i]],
 				digitSegmentMap[string(d)],
-				r3.Vector{2*digitXoffset + colonWidth + float64(i)*digitXoffset, 0, 0},
+				r3.Vector{float64(1-i) * digitXoffset, 0, 0},
 			)
 		}
 		oldHour = strings.Split(hourStr, "")
+		_ = oldHour
 		oldMinute = strings.Split(minuteStr, "")
 		time.Sleep(5 * time.Second)
 	}
@@ -373,7 +402,7 @@ func writeSegment(motionService motion.Service, worldState *referenceframe.World
 	}
 	// retreat from glass
 	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(markerEnd, markerOrient))
-	_, err = motionService.Move(context.Background(), markerResource, goal, worldState, writeConstraint, nil)
+	_, err = motionService.Move(context.Background(), markerResource, goal, worldState, linearConstraint, nil)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -391,9 +420,9 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 	if segPts[0].X == segPts[1].X {
 		// vertical line
 		eraserPt1 = segPts[0]
-		eraserPt1.Y -= (eraserY/2 + segBuffer/2)
+		eraserPt1.Y -= (eraserY/2)
 		eraserPt2 = segPts[1]
-		eraserPt2.Y += (eraserY/2 + segBuffer/2)
+		eraserPt2.Y += (eraserY/2)
 		
 		// Don't erase adjacent lines
 		if segPts[0].X == 0 {
@@ -410,9 +439,9 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 		//horizontal line
 		eraserOrient = &spatialmath.OrientationVectorDegrees{OZ: -1}
 		eraserPt1 = segPts[0]
-		eraserPt1.X += (eraserX/2 + segBuffer/2)
+		eraserPt1.X += (eraserY/2)
 		eraserPt2 = segPts[1]
-		eraserPt2.X -= (eraserX/2 + segBuffer/2)
+		eraserPt2.X -= (eraserY/2)
 	}
 
 	eraserPt1.Z = eraserBuf
@@ -446,6 +475,15 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 	if err != nil {
 		fmt.Println(err)
 	}
+}
+
+// calibration
+var calibPoints = []r3.Vector{
+	{0, 0, 0},
+	{600, 0, 0},
+	{600, -300, 0},
+	{0, -300, 0},
+	{0, 0, 0},
 }
 
 // Write out the word "VIAM" backwards (visible through glass)
@@ -492,11 +530,11 @@ var viamPoints = [][]r3.Vector{
 //        D
 
 var segments = map[string][]r3.Vector{
-	"F": []r3.Vector{
+	"B": []r3.Vector{
 		{0, -segBuffer, 0},
 		{0, 0 - segBuffer - segLen, 0},
 	},
-	"E": []r3.Vector{
+	"C": []r3.Vector{
 		{0, -segLen - 3*segBuffer, 0},
 		{0, -segLen*2 - 3*segBuffer, 0},
 	},
@@ -512,11 +550,11 @@ var segments = map[string][]r3.Vector{
 		{segBuffer, -segLen*2 - 4*segBuffer, 0},
 		{segBuffer + segLen, -segLen*2 - 4*segBuffer, 0},
 	},
-	"C": []r3.Vector{
+	"E": []r3.Vector{
 		{segLen + 2*segBuffer, -segLen - 3*segBuffer, 0},
 		{segLen + 2*segBuffer, -segLen*2 - 3*segBuffer, 0},
 	},
-	"B": []r3.Vector{
+	"F": []r3.Vector{
 		{segLen + 2*segBuffer, -segBuffer, 0},
 		{segLen + 2*segBuffer, -segBuffer - segLen, 0},
 	},
@@ -530,7 +568,7 @@ var digitSegmentMap = map[string]string{
 	"3": "ABCDG",
 	"4": "BCFG",
 	"5": "ACDFG",
-	"6": "BCDEFG",
+	"6": "ACDEFG",
 	"7": "ABC",
 	"8": "ABCDEFG",
 	"9": "ABCDFG",
