@@ -410,7 +410,7 @@ func writeSegment(motionService motion.Service, worldState *referenceframe.World
 
 func eraseSegment(motionService motion.Service, worldState *referenceframe.WorldState, segStr string, offset r3.Vector) {
 	eraserResource := resource.Name{Name: "eraser"}
-	eraserOrient := &spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90}
+	eraserOrient := &spatialmath.OrientationVectorDegrees{OZ: -1}
 	segPts := segments[segStr]
 
 	var eraserPt1 r3.Vector
@@ -420,24 +420,24 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 	if segPts[0].X == segPts[1].X {
 		// vertical line
 		eraserPt1 = segPts[0]
-		eraserPt1.Y -= (eraserY/2)
+		eraserPt1.Y -= (eraserX/2) - 4
 		eraserPt2 = segPts[1]
-		eraserPt2.Y += (eraserY/2)
+		eraserPt2.Y += (eraserX/2) - 4
 		
 		// Don't erase adjacent lines
 		if segPts[0].X == 0 {
 			// left side
-			eraserPt1.X += eraserX/2 - segBuffer
-			eraserPt2.X += eraserX/2 - segBuffer
+			eraserPt1.X += eraserY/2 - segBuffer
+			eraserPt2.X += eraserY/2 - segBuffer
 		} else {
 			// right side
-			eraserPt1.X -= eraserX/2 - segBuffer
-			eraserPt2.X -= eraserX/2 - segBuffer
+			eraserPt1.X -= eraserY/2 - segBuffer
+			eraserPt2.X -= eraserY/2 - segBuffer
 		}
 		
 	} else {
 		//horizontal line
-		eraserOrient = &spatialmath.OrientationVectorDegrees{OZ: -1}
+		//~ eraserOrient = &spatialmath.OrientationVectorDegrees{OZ: -1}
 		eraserPt1 = segPts[0]
 		eraserPt1.X += (eraserY/2)
 		eraserPt2 = segPts[1]
@@ -465,6 +465,12 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 	}
 	// erase
 	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserPt2.Add(offset), eraserOrient))
+	_, err = motionService.Move(context.Background(), eraserResource, goal, worldState, eraseConstraint, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+	// touch glass
+	goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(eraserPt1.Add(offset), eraserOrient))
 	_, err = motionService.Move(context.Background(), eraserResource, goal, worldState, eraseConstraint, nil)
 	if err != nil {
 		fmt.Println(err)
