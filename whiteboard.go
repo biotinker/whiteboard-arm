@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/golang/geo/r3"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -21,28 +20,29 @@ import (
 	"go.viam.com/rdk/services/motion"
 )
 
+// Constants used for calculating positions
 const (
-	cloudUrl = ""
-	secret   = ""
+	cloudUrl = "" // Viam cloud URL
+	secret   = "" // VIAM cloud secret
 
-	zAdj = 3.5         // adjustment to writing altitude
+	zAdj = 3.5         // adjustment to glass contact altitude for both the marker and the eraser
 	zBuf = zAdj + 50 // adjustment to non-writing holding height
 
 	eraserBuf = zAdj - 1 // eraser held this much further away than marker
 
-	armName = "xArm7"
+	armName = "xArm7" // name of Viam component to do the writing
 
-	markerLen = 170.
-	eraserLen = 180.
-	eraserX   = 90.
-	eraserY   = 45.
+	markerLen = 170. // Length of line from arm EE to marker tip
+	eraserLen = 180. // Length of line from arm EE to eraser center 
+	eraserX   = 90. // eraser X size in mm
+	eraserY   = 45. // eraser Y size in mm
 
 	// 7-segment line length and spacing
 	segLen    = 100.
 	segBuffer = 10.
 
-	digitXoffset = 150.
-	colonWidth   = 55.
+	digitXoffset = 150. // width of a digit + the spacing to the next digit
+	colonWidth   = 55. // Width to leave between hour and minute digits for a :
 )
 
 var (
@@ -58,11 +58,11 @@ var (
 	pNorm = v1.Cross(v2).Normalize()
 
 	allowWrite = []*servicepb.CollisionSpecification_AllowedFrameCollisions{
-		// BUG workaround
+		// BUG workaround, will update when RDK is fixed
 		&servicepb.CollisionSpecification_AllowedFrameCollisions{Frame1: "marker_origin", Frame2: "glass"},
 	}
 	allowErase = []*servicepb.CollisionSpecification_AllowedFrameCollisions{
-		// BUG workaround
+		// BUG workaround, will update when RDK is fixed
 		&servicepb.CollisionSpecification_AllowedFrameCollisions{Frame1: "eraser_origin", Frame2: "glass"},
 	}
 
@@ -77,7 +77,7 @@ var (
 	}
 )
 
-// This will test solving the path to write the word "VIAM" on a whiteboard.
+// Generate the various transforms from the end of the xArm7 to the ends of the marker/eraser on the printed attachment
 func GenerateTransforms() []*referenceframe.LinkInFrame {
 
 	if pNorm.Y < 0 {
@@ -137,6 +137,7 @@ func GenerateTransforms() []*referenceframe.LinkInFrame {
 	return transforms
 }
 
+// Create the obstacles for things not to hit: arm pedestal, metal sides of the window, and of course the glass pane itself
 func GenerateObstacles() []*referenceframe.GeometriesInFrame {
 
 	obstaclesInFrame := []*referenceframe.GeometriesInFrame{}
@@ -170,67 +171,6 @@ func GenerateObstacles() []*referenceframe.GeometriesInFrame {
 	return obstaclesInFrame
 }
 
-func planeDist(query r3.Vector) float64 {
-
-	// get the constant value for the plane
-	pConst := -query.Dot(pNorm)
-
-	return math.Abs(pNorm.Dot(query) + pConst)
-}
-
-func main() {
-	logger := golog.NewDevelopmentLogger("client")
-	robot, err := client.New(
-		context.Background(),
-		cloudUrl,
-		logger,
-		client.WithDialOptions(rpc.WithCredentials(rpc.Credentials{
-			Type:    utils.CredentialsTypeRobotLocationSecret,
-			Payload: secret,
-		})),
-	)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	motionService, err := motion.FromRobot(robot, "builtin")
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	fmt.Println(planeDist(r3.Vector{216.1, -499.2, 734.4}))
-
-	obstacles := GenerateObstacles()
-	transforms := GenerateTransforms()
-
-	worldState := &referenceframe.WorldState{
-		Obstacles:  obstacles,
-		Transforms: transforms,
-	}
-	_ = worldState
-	defer robot.Close(context.Background())
-	logger.Info("Resources:")
-	logger.Info(robot.ResourceNames())
-
-	markerResource := resource.Name{Name: "marker"}
-
-	markerPoseInGlass, err := motionService.GetPose(context.Background(), markerResource, "glass", transforms, nil)
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Println(spatialmath.PoseToProtobuf(markerPoseInGlass.Pose()))
-
-	// Move to start position
-	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(r3.Vector{0, 0, 200}, &spatialmath.OrientationVectorDegrees{OZ: -1}))
-	_, err = motionService.Move(context.Background(), markerResource, goal, worldState, nil, nil)
-	if err != nil {
-		fmt.Println(err)
-	}
-	//~ writeViam(motionService, worldState)
-	writeTime(motionService, worldState)
-	//~ calibrate(motionService, worldState)
-}
-
 func calibrate(motionService motion.Service, worldState *referenceframe.WorldState) {
 
 	markerResource := resource.Name{Name: "marker"}
@@ -255,40 +195,8 @@ func calibrate(motionService motion.Service, worldState *referenceframe.WorldSta
 	_, err = motionService.Move(context.Background(), markerResource, goal, worldState, writeConstraint, nil)
 }
 
-func writeViam(motionService motion.Service, worldState *referenceframe.WorldState) {
-
-	markerResource := resource.Name{Name: "marker"}
-
-	for _, viamLetterPts := range viamPoints {
-		startPt := viamLetterPts[0]
-		startPt.Z += zBuf
-		goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(startPt, &spatialmath.OrientationVectorDegrees{OZ: -1}))
-		_, err := motionService.Move(context.Background(), markerResource, goal, worldState, nil, nil)
-		if err != nil {
-			fmt.Println(err)
-		}
-		for _, viamPt := range viamLetterPts {
-			adjPt := viamPt
-			adjPt.Z += zAdj
-			goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(adjPt, &spatialmath.OrientationVectorDegrees{OZ: -1}))
-			_, err = motionService.Move(context.Background(), markerResource, goal, worldState, writeConstraint, nil)
-		}
-		endPt := viamLetterPts[len(viamLetterPts)-1]
-		endPt.Z += zBuf
-		goal = referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(endPt, &spatialmath.OrientationVectorDegrees{OZ: -1}))
-		_, err = motionService.Move(context.Background(), markerResource, goal, worldState, writeConstraint, nil)
-	}
-
-	// Move to final position
-	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(r3.Vector{100, -100, 300}, &spatialmath.OrientationVectorDegrees{OZ: -1}))
-	_, err := motionService.Move(context.Background(), markerResource, goal, worldState, nil, nil)
-	if err != nil {
-		fmt.Println(err)
-	}
-}
-
+// Calling this will write the time on the defined plane, and keep it updated
 func writeTime(motionService motion.Service, worldState *referenceframe.WorldState) {
-
 	oldHour := []string{".", "."}
 	oldMinute := []string{".", "."}
 	for {
@@ -299,7 +207,6 @@ func writeTime(motionService motion.Service, worldState *referenceframe.WorldSta
 		// Write the starting time
 		hourStr := strconv.Itoa(curHour)
 		minuteStr := strconv.Itoa(curMinute)
-		fmt.Println("hour", hourStr, "minute", minuteStr)
 		if len(hourStr) == 1 {
 			hourStr = "." + hourStr
 		}
@@ -316,9 +223,6 @@ func writeTime(motionService motion.Service, worldState *referenceframe.WorldSta
 			)
 		}
 		for i, d := range minuteStr {
-			//~ if i == 0 {
-				//~ continue
-			//~ }
 			changeDigit(
 				motionService,
 				worldState,
@@ -328,14 +232,13 @@ func writeTime(motionService motion.Service, worldState *referenceframe.WorldSta
 			)
 		}
 		oldHour = strings.Split(hourStr, "")
-		_ = oldHour
 		oldMinute = strings.Split(minuteStr, "")
 		time.Sleep(5 * time.Second)
 	}
 }
 
+// This will determine which segment changes are necessary to update a single 7-segment digit, and will erase then draw the needed segs
 func changeDigit(motionService motion.Service, worldState *referenceframe.WorldState, oldSegs, newSegs string, offset r3.Vector) {
-
 	toErase := map[string]bool{}
 	toWrite := map[string]bool{}
 	for _, d := range oldSegs {
@@ -350,8 +253,6 @@ func changeDigit(motionService motion.Service, worldState *referenceframe.WorldS
 			toWrite[string(d)] = true
 		}
 	}
-	fmt.Println("to erase", toErase)
-	fmt.Println("to write", toWrite)
 
 	// First erase unneeded segments
 	for k, v := range toErase {
@@ -367,6 +268,7 @@ func changeDigit(motionService motion.Service, worldState *referenceframe.WorldS
 	}
 }
 
+// This will write one segment in a 7-segment display
 func writeSegment(motionService motion.Service, worldState *referenceframe.WorldState, segStr string, offset r3.Vector) {
 	markerResource := resource.Name{Name: "marker"}
 	segPts := segments[segStr]
@@ -407,6 +309,7 @@ func writeSegment(motionService motion.Service, worldState *referenceframe.World
 	}
 }
 
+// This will erase one segment in a 7-segment display
 func eraseSegment(motionService motion.Service, worldState *referenceframe.WorldState, segStr string, offset r3.Vector) {
 	eraserResource := resource.Name{Name: "eraser"}
 	eraserOrient := &spatialmath.OrientationVectorDegrees{OZ: -1}
@@ -482,7 +385,7 @@ func eraseSegment(motionService motion.Service, worldState *referenceframe.World
 	}
 }
 
-// calibration
+// calibration points; this just draws a big box
 var calibPoints = []r3.Vector{
 	{0, 0, 0},
 	{600, 0, 0},
@@ -491,49 +394,12 @@ var calibPoints = []r3.Vector{
 	{0, 0, 0},
 }
 
-// Write out the word "VIAM" backwards (visible through glass)
-var viamPoints = [][]r3.Vector{
-	// M
-	[]r3.Vector{
-		{220, -100, 0},
-		{250, 0, 0},
-		{280, -100, 0},
-		{310, 0, 0},
-		{340, -100, 0},
-	},
-
-	// A
-	[]r3.Vector{
-		{120, -100, 0},
-		{160, 0, 0},
-		{200, -100, 0},
-	},
-	// Middle bar of A
-	[]r3.Vector{
-		{140, -50, 0},
-		{180, -50, 0},
-	},
-
-	// I
-	[]r3.Vector{
-		{100, 0, 0},
-		{100, -100, 0},
-	},
-
-	// V
-	[]r3.Vector{
-		{0, 0, 0},
-		{40, -100, 0},
-		{80, 0, 0},
-	},
-}
-
+// Define the line segments for each segment of a 7-segment display
 //  _     A
 // |_|  F   B
 // |_|    G
 //      E   C
 //        D
-
 var segments = map[string][]r3.Vector{
 	"B": []r3.Vector{
 		{0, -segBuffer, 0},
@@ -565,6 +431,7 @@ var segments = map[string][]r3.Vector{
 	},
 }
 
+// Specify which segments of a 7-segment display are used to draw each digit, plus "." to represent "empty"
 var digitSegmentMap = map[string]string{
 	".": "",
 	"0": "ABCDEF",
@@ -577,4 +444,54 @@ var digitSegmentMap = map[string]string{
 	"7": "ABC",
 	"8": "ABCDEFG",
 	"9": "ABCDFG",
+}
+
+func main() {
+	logger := golog.NewDevelopmentLogger("client")
+	robot, err := client.New(
+		context.Background(),
+		cloudUrl,
+		logger,
+		client.WithDialOptions(rpc.WithCredentials(rpc.Credentials{
+			Type:    utils.CredentialsTypeRobotLocationSecret,
+			Payload: secret,
+		})),
+	)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	motionService, err := motion.FromRobot(robot, "builtin")
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	obstacles := GenerateObstacles()
+	transforms := GenerateTransforms()
+
+	worldState := &referenceframe.WorldState{
+		Obstacles:  obstacles,
+		Transforms: transforms,
+	}
+	_ = worldState
+	defer robot.Close(context.Background())
+	logger.Info("Resources:")
+	logger.Info(robot.ResourceNames())
+
+	markerResource := resource.Name{Name: "marker"}
+
+	markerPoseInGlass, err := motionService.GetPose(context.Background(), markerResource, "glass", transforms, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println(spatialmath.PoseToProtobuf(markerPoseInGlass.Pose()))
+
+	// Move to start position
+	goal := referenceframe.NewPoseInFrame("glass", spatialmath.NewPose(r3.Vector{0, 0, 200}, &spatialmath.OrientationVectorDegrees{OZ: -1}))
+	_, err = motionService.Move(context.Background(), markerResource, goal, worldState, nil, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+	//~ calibrate(motionService, worldState) // run this to simply draw a large box, helpful for checking plane calibration
+	writeTime(motionService, worldState)
 }
