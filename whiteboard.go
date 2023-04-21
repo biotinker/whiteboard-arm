@@ -12,7 +12,6 @@ import (
 	"github.com/edaniels/golog"
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/robot/client"
-	//~ pb "go.viam.com/api/common/v1"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/utils"
