@@ -20,10 +20,19 @@ import (
 	"go.viam.com/rdk/services/motion"
 )
 
-// Constants used for calculating positions
-const (
+var(
+	// Measured points on glass plane
+	// CHANGE THESE since your arm isn't in the same place as mine.
+	pt1 = r3.Vector{-430.35, -412, 699.97}
+	pt2 = r3.Vector{-97.5, -404.28, 415.81}
+	pt3 = r3.Vector{232.71, -400, 753.94}
+	
 	cloudUrl = "" // Viam cloud URL
 	secret   = "" // VIAM cloud secret
+)
+
+// Constants used for calculating positions
+const (
 
 	zAdj = 3.5         // adjustment to glass contact altitude for both the marker and the eraser
 	zBuf = zAdj + 50 // adjustment to non-writing holding height
@@ -46,16 +55,11 @@ const (
 )
 
 var (
-	// Measured points on glass plane
-	pt1 = r3.Vector{-430.35, -412, 699.97}
-	pt2 = r3.Vector{-97.5, -404.28, 415.81}
-	pt3 = r3.Vector{232.71, -400, 753.94}
 
-	home7 = referenceframe.FloatsToInputs([]float64{0, 0, 0, 0, 0, 0, 0})
-
-	v1    = pt2.Sub(pt1)
-	v2    = pt3.Sub(pt1)
-	pNorm = v1.Cross(v2).Normalize()
+	vec1    = pt2.Sub(pt1)
+	vec2    = pt3.Sub(pt1)
+	// plane normal
+	pNorm = vec1.Cross(vec2).Normalize()
 
 	allowWrite = []*servicepb.CollisionSpecification_AllowedFrameCollisions{
 		// BUG workaround, will update when RDK is fixed
@@ -66,24 +70,32 @@ var (
 		&servicepb.CollisionSpecification_AllowedFrameCollisions{Frame1: "eraser_origin", Frame2: "glass"},
 	}
 
+	// Move linearly allowing no collisions
 	linearConstraint = &servicepb.Constraints{LinearConstraint: []*servicepb.LinearConstraint{&servicepb.LinearConstraint{}}}
+	
+	// Move linearly allowing the marker to collide with the whiteboard (to write on it)
 	writeConstraint  = &servicepb.Constraints{
 		LinearConstraint:       []*servicepb.LinearConstraint{&servicepb.LinearConstraint{}},
 		CollisionSpecification: []*servicepb.CollisionSpecification{&servicepb.CollisionSpecification{Allows: allowWrite}},
 	}
+	
+	// Move linearly allowing the eraser to collide with the whiteboard (to erase it)
 	eraseConstraint = &servicepb.Constraints{
 		LinearConstraint:       []*servicepb.LinearConstraint{&servicepb.LinearConstraint{}},
 		CollisionSpecification: []*servicepb.CollisionSpecification{&servicepb.CollisionSpecification{Allows: allowErase}},
 	}
 )
 
-// Generate the various transforms from the end of the xArm7 to the ends of the marker/eraser on the printed attachment
+// Generate the various transforms from the end of the arm to the ends of the marker/eraser on the printed attachment
 func GenerateTransforms() []*referenceframe.LinkInFrame {
 
-	if pNorm.Y < 0 {
+	// Attempt to ensure correct orientation of the whiteboard; if pNorm is pointing away from the origin, flip it.
+	// If you see weird failure-to-solve stuff, it might be due to issues with this and trying to write on the wrong face of the whiteboard
+	if pt1.Norm2() < pt1.Add(pNorm).Norm2() {
 		pNorm = pNorm.Mul(-1)
 	}
 
+	// Pose of whiteboard in World frame. Theta=90 rotates to be in a convenient orientation for specifying 
 	glassFrame := referenceframe.NewLinkInFrame(
 		"world",
 		spatialmath.NewPose(pt3, &spatialmath.OrientationVectorDegrees{Theta: 90, OX: pNorm.X, OY: pNorm.Y, OZ: pNorm.Z}),
